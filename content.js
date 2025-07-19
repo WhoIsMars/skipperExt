@@ -5,9 +5,11 @@ class UniversalVideoController {
     this.lastVideoCheck = 0;
     this.overlayBar = null;
     this.isOverlayEnabled = true;
+    this.videoObserver = null;
     this.setupMessageListener();
     this.loadOverlaySettings();
     this.findVideo();
+    this.setupAdvancedVideoDetection();
   }
   
   setupMessageListener() {
@@ -32,213 +34,415 @@ class UniversalVideoController {
     });
   }
   
-  findVideo() {
-    // Cerca video con multiple strategie
-    const strategies = [
-      // Strategia 1: video HTML5 standard
-      () => document.querySelector('video'),
+  setupAdvancedVideoDetection() {
+    // Observer per iframe dinamici
+    const observer = new MutationObserver((mutations) => {
+      let shouldRecheck = false;
       
-      // Strategia 2: video in iframe (YouTube, Vimeo, etc.)
-      () => {
-        const iframes = document.querySelectorAll('iframe');
-        for (let iframe of iframes) {
-          try {
-            const video = iframe.contentDocument?.querySelector('video');
-            if (video) return video;
-          } catch (e) {
-            // Cross-origin iframe, non possiamo accedere
-          }
-        }
-        return null;
-      },
-      
-      // Strategia 3: video in shadow DOM
-      () => {
-        const elements = document.querySelectorAll('*');
-        for (let el of elements) {
-          if (el.shadowRoot) {
-            const video = el.shadowRoot.querySelector('video');
-            if (video) return video;
-          }
-        }
-        return null;
-      },
-      
-      // Strategia 4: video creati dinamicamente
-      () => {
-        const videos = document.getElementsByTagName('video');
-        return videos.length > 0 ? videos[0] : null;
-      },
-      
-      // Strategia 5: selettori specifici per player popolari
-      () => {
-        const selectors = [
-          // YouTube
-          '#movie_player video',
-          '.video-stream',
-          
-          // Vimeo
-          '.vp-video-wrapper video',
-          '.vp-video video',
-          
-          // Twitch
-          '.video-player video',
-          
-          // Netflix
-          '.VideoContainer video',
-          
-          // Prime Video
-          '.webPlayerContainer video',
-          
-          // Dailymotion
-          '.dmp_VideoPlayer video',
-          
-          // Altadefinizione
-          '#player video',
-          '.player-container video',
-          '.video-player-container video',
-          '.altadefinizione-player video',
-          '#vjs_video_3_html5_api',
-          '.vjs-tech',
-          
-          // StreamingCommunity
-          '.plyr__video-wrapper video',
-          '.plyr__video',
-          '#streamingcommunity-player video',
-          '.sc-player video',
-          '.streaming-player video',
-          '.player-wrapper video',
-          '#player-container video',
-          '.video-container video',
-          
-          // Player Video.js (usato da molti siti streaming)
-          '.video-js .vjs-tech',
-          '.vjs-html5-video',
-          
-          // JWPlayer (comune sui siti streaming)
-          '.jwplayer .jw-video video',
-          '.jw-media video',
-          
-          // Altri player comuni sui siti streaming
-          '.flowplayer video',
-          '.fp-engine video',
-          '.dplayer-video',
-          '.aplayer-video',
-          '#mediaelement video',
-          '.mejs__player video',
-          
-          // Selettori generici per player embedati
-          '.embed-responsive video',
-          '.responsive-video video',
-          '.video-embed video',
-          
-          // Altri player comuni
-          '.jwplayer video',
-          '.plyr video',
-          '.video-js video'
-        ];
-        
-        for (let selector of selectors) {
-          const video = document.querySelector(selector);
-          if (video) return video;
-        }
-        return null;
-      },
-      
-      // Strategia 6: ricerca specifica per siti streaming italiani
-      () => {
-        // Controlla se siamo su Altadefinizione
-        if (window.location.hostname.includes('altadefinizione') || 
-            window.location.hostname.includes('altadefinizione01')) {
-          
-          // Cerca nei frame e iframe specifici di Altadefinizione
-          const frames = document.querySelectorAll('iframe, frame');
-          for (let frame of frames) {
-            try {
-              const frameDoc = frame.contentDocument || frame.contentWindow?.document;
-              if (frameDoc) {
-                const video = frameDoc.querySelector('video') || 
-                            frameDoc.querySelector('#player video') ||
-                            frameDoc.querySelector('.vjs-tech');
-                if (video) return video;
-              }
-            } catch (e) {
-              // Cross-origin frame
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType === 1) { // Element node
+            if (node.tagName === 'VIDEO' || 
+                node.tagName === 'IFRAME' ||
+                node.querySelector && (node.querySelector('video') || node.querySelector('iframe'))) {
+              shouldRecheck = true;
             }
           }
-          
-          // Cerca nei container comuni di Altadefinizione
-          const containers = [
-            '#player',
-            '.player',
-            '.video-player',
-            '#video-player',
-            '.player-container'
-          ];
-          
-          for (let container of containers) {
-            const element = document.querySelector(container);
-            if (element) {
-              const video = element.querySelector('video') || 
-                          element.querySelector('.vjs-tech') ||
-                          element.querySelector('#vjs_video_3_html5_api');
-              if (video) return video;
-            }
-          }
-        }
-        
-        // Controlla se siamo su StreamingCommunity
-        if (window.location.hostname.includes('streamingcommunity')) {
-          
-          // Cerca player Plyr (comune su StreamingCommunity)
-          const plyrVideo = document.querySelector('.plyr video') || 
-                           document.querySelector('.plyr__video') ||
-                           document.querySelector('.plyr__video-wrapper video');
-          if (plyrVideo) return plyrVideo;
-          
-          // Cerca nei container specifici
-          const scContainers = [
-            '.player-container',
-            '.video-player-container', 
-            '#video-container',
-            '.streaming-player',
-            '.sc-player-wrapper'
-          ];
-          
-          for (let container of scContainers) {
-            const element = document.querySelector(container);
-            if (element) {
-              const video = element.querySelector('video');
-              if (video) return video;
-            }
-          }
-        }
-        
-        return null;
+        });
+      });
+      
+      if (shouldRecheck && !this.video) {
+        setTimeout(() => this.findVideo(), 500);
       }
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+    
+    // Controlla periodicamente per video caricati dinamicamente
+    setInterval(() => {
+      if (!this.video || !document.body.contains(this.video)) {
+        this.findVideo();
+      }
+    }, 2000);
+    
+    // Ascolta eventi globali per cambi di pagina SPA
+    window.addEventListener('popstate', () => {
+      setTimeout(() => this.findVideo(), 1000);
+    });
+    
+    // Ascolta eventi di navigazione
+    let lastUrl = location.href;
+    const urlObserver = new MutationObserver(() => {
+      if (location.href !== lastUrl) {
+        lastUrl = location.href;
+        setTimeout(() => this.findVideo(), 1000);
+      }
+    });
+    urlObserver.observe(document, { subtree: true, childList: true });
+  }
+  
+  findVideo() {
+    console.log('🔍 Ricerca video su:', window.location.hostname);
+    
+    // Strategie specifiche per dominio
+    const hostname = window.location.hostname.toLowerCase();
+    
+    if (hostname.includes('altadefinizione') || hostname.includes('altadefinizione01')) {
+      this.findAltadefinzioneVideo();
+    } else if (hostname.includes('streamingunity') || hostname.includes('streamingcommunity')) {
+      this.findStreamingCommunityVideo();
+    } else {
+      this.findGenericVideo();
+    }
+    
+    // Se non trova video, riprova con strategie generiche
+    if (!this.video) {
+      this.findGenericVideo();
+    }
+    
+    // Se ancora non trova, attiva ricerca avanzata
+    if (!this.video) {
+      this.advancedVideoSearch();
+    }
+    
+    if (this.video) {
+      console.log('✅ Video trovato:', this.video);
+      this.setupVideoListeners();
+      if (this.isOverlayEnabled) {
+        setTimeout(() => this.showOverlay(), 1000);
+      }
+    } else {
+      console.log('❌ Nessun video trovato');
+    }
+  }
+  
+  findAltadefinzioneVideo() {
+    console.log('🎬 Ricerca video Altadefinizione...');
+    
+    // Selettori specifici per Altadefinizione
+    const selectors = [
+      // Player principali
+      '#player video',
+      '.player video',
+      '#vjs_video_3_html5_api',
+      '.vjs-tech',
+      '.video-js video',
+      '.vjs-html5-video',
+      
+      // Container comuni
+      '.player-container video',
+      '.video-player-container video',
+      '#video-container video',
+      '.video-container video',
+      
+      // Player JWPlayer
+      '.jwplayer video',
+      '.jw-video video',
+      '.jw-media video',
+      
+      // Player VideoJS
+      '.video-js .vjs-tech',
+      'video.vjs-tech',
+      
+      // Altri player
+      '.dplayer-video',
+      '.flowplayer video'
     ];
     
-    // Prova ogni strategia
-    for (let strategy of strategies) {
-      try {
-        const video = strategy();
-        if (video && video.duration) {
-          this.video = video;
-          this.setupVideoListeners();
-          console.log('Universal Video Controller: Video trovato', video);
-          return;
-        }
-      } catch (e) {
-        // Strategia fallita, prova la prossima
+    for (const selector of selectors) {
+      const video = document.querySelector(selector);
+      if (video && this.isValidVideo(video)) {
+        this.video = video;
+        return;
       }
     }
     
-    // Se non trova video, riprova dopo un po'
-    const now = Date.now();
-    if (now - this.lastVideoCheck > 2000) { // Ogni 2 secondi max
-      this.lastVideoCheck = now;
-      setTimeout(() => this.findVideo(), 1000);
+    // Ricerca in iframe
+    this.searchInFrames();
+    
+    // Ricerca specifica per Altadefinizione con attesa
+    setTimeout(() => {
+      if (!this.video) {
+        this.waitForAltadefinzioneVideo();
+      }
+    }, 2000);
+  }
+  
+  waitForAltadefinzioneVideo() {
+    let attempts = 0;
+    const maxAttempts = 10;
+    
+    const checkVideo = () => {
+      attempts++;
+      
+      // Cerca nei player più comuni di Altadefinizione
+      const playerSelectors = [
+        'video[src*="mp4"]',
+        'video[src*="m3u8"]',
+        'video[data-setup]',
+        '.vjs-tech[src]'
+      ];
+      
+      for (const selector of playerSelectors) {
+        const video = document.querySelector(selector);
+        if (video && this.isValidVideo(video)) {
+          this.video = video;
+          this.setupVideoListeners();
+          if (this.isOverlayEnabled) {
+            setTimeout(() => this.showOverlay(), 500);
+          }
+          return;
+        }
+      }
+      
+      if (attempts < maxAttempts) {
+        setTimeout(checkVideo, 1000);
+      }
+    };
+    
+    checkVideo();
+  }
+  
+  findStreamingCommunityVideo() {
+    console.log('🎬 Ricerca video StreamingCommunity...');
+    
+    const selectors = [
+      // Player Plyr (molto comune)
+      '.plyr video',
+      '.plyr__video',
+      '.plyr__video-wrapper video',
+      '.plyr-container video',
+      
+      // Container specifici
+      '.player-container video',
+      '.video-player-container video',
+      '#video-container video',
+      '.streaming-player video',
+      '.sc-player video',
+      '#player video',
+      
+      // Altri player comuni
+      '.jwplayer video',
+      '.video-js video',
+      '.dplayer-video',
+      
+      // Selettori generici che potrebbero funzionare
+      'video[src]',
+      'video[data-src]'
+    ];
+    
+    for (const selector of selectors) {
+      const video = document.querySelector(selector);
+      if (video && this.isValidVideo(video)) {
+        this.video = video;
+        return;
+      }
     }
+    
+    // Ricerca in iframe per player embedded
+    this.searchInFrames();
+    
+    // Attesa per caricamento dinamico
+    setTimeout(() => {
+      if (!this.video) {
+        this.waitForStreamingVideo();
+      }
+    }, 2000);
+  }
+  
+  waitForStreamingVideo() {
+    let attempts = 0;
+    const maxAttempts = 15;
+    
+    const checkVideo = () => {
+      attempts++;
+      
+      // Controlla tutti i video nella pagina
+      const videos = document.querySelectorAll('video');
+      for (const video of videos) {
+        if (this.isValidVideo(video)) {
+          this.video = video;
+          this.setupVideoListeners();
+          if (this.isOverlayEnabled) {
+            setTimeout(() => this.showOverlay(), 500);
+          }
+          return;
+        }
+      }
+      
+      // Controlla anche nei player che potrebbero apparire
+      const dynamicSelectors = [
+        'video[autoplay]',
+        'video[controls]',
+        'video[preload]',
+        '.plyr__video-wrapper video'
+      ];
+      
+      for (const selector of dynamicSelectors) {
+        const video = document.querySelector(selector);
+        if (video && this.isValidVideo(video)) {
+          this.video = video;
+          this.setupVideoListeners();
+          if (this.isOverlayEnabled) {
+            setTimeout(() => this.showOverlay(), 500);
+          }
+          return;
+        }
+      }
+      
+      if (attempts < maxAttempts) {
+        setTimeout(checkVideo, 1000);
+      }
+    };
+    
+    checkVideo();
+  }
+  
+  searchInFrames() {
+    // Cerca in tutti gli iframe della pagina
+    const frames = document.querySelectorAll('iframe, frame');
+    
+    for (const frame of frames) {
+      try {
+        const frameDoc = frame.contentDocument || frame.contentWindow?.document;
+        if (frameDoc) {
+          const video = frameDoc.querySelector('video');
+          if (video && this.isValidVideo(video)) {
+            this.video = video;
+            return;
+          }
+        }
+      } catch (e) {
+        // Cross-origin frame, non possiamo accedere
+        console.log('Frame cross-origin rilevato:', frame.src);
+      }
+    }
+    
+    // Attende che i frame si carichino
+    frames.forEach(frame => {
+      frame.addEventListener('load', () => {
+        setTimeout(() => {
+          if (!this.video) {
+            this.searchInFrames();
+          }
+        }, 1000);
+      });
+    });
+  }
+  
+  findGenericVideo() {
+    const selectors = [
+      // Video HTML5 standard
+      'video',
+      
+      // YouTube
+      '#movie_player video',
+      '.video-stream',
+      
+      // Vimeo
+      '.vp-video-wrapper video',
+      '.vp-video video',
+      
+      // Netflix
+      '.VideoContainer video',
+      
+      // Prime Video
+      '.webPlayerContainer video',
+      
+      // Twitch
+      '.video-player video',
+      
+      // Dailymotion
+      '.dmp_VideoPlayer video',
+      
+      // Player comuni
+      '.video-js video',
+      '.jwplayer video',
+      '.plyr video',
+      '.flowplayer video'
+    ];
+    
+    for (const selector of selectors) {
+      const video = document.querySelector(selector);
+      if (video && this.isValidVideo(video)) {
+        this.video = video;
+        return;
+      }
+    }
+  }
+  
+  advancedVideoSearch() {
+    console.log('🔍 Ricerca avanzata video...');
+    
+    // Cerca in shadow DOM
+    const allElements = document.querySelectorAll('*');
+    for (const el of allElements) {
+      if (el.shadowRoot) {
+        const video = el.shadowRoot.querySelector('video');
+        if (video && this.isValidVideo(video)) {
+          this.video = video;
+          return;
+        }
+      }
+    }
+    
+    // Cerca video con attributi specifici
+    const videoElements = document.getElementsByTagName('video');
+    for (const video of videoElements) {
+      if (this.isValidVideo(video)) {
+        this.video = video;
+        return;
+      }
+    }
+    
+    // Usa MutationObserver per video caricati dinamicamente
+    if (!this.videoObserver) {
+      this.videoObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType === 1) {
+              if (node.tagName === 'VIDEO' && this.isValidVideo(node)) {
+                this.video = node;
+                this.setupVideoListeners();
+                if (this.isOverlayEnabled) {
+                  setTimeout(() => this.showOverlay(), 500);
+                }
+                return;
+              }
+              
+              const video = node.querySelector && node.querySelector('video');
+              if (video && this.isValidVideo(video)) {
+                this.video = video;
+                this.setupVideoListeners();
+                if (this.isOverlayEnabled) {
+                  setTimeout(() => this.showOverlay(), 500);
+                }
+                return;
+              }
+            }
+          }
+        }
+      });
+      
+      this.videoObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+    }
+  }
+  
+  isValidVideo(video) {
+    if (!video || video.tagName !== 'VIDEO') return false;
+    
+    // Controlla se il video ha contenuto
+    return video.duration > 0 || 
+           video.readyState > 0 || 
+           video.src || 
+           video.currentSrc ||
+           video.querySelector('source');
   }
   
   setupVideoListeners() {
@@ -248,7 +452,7 @@ class UniversalVideoController {
     const observer = new MutationObserver(() => {
       if (!document.body.contains(this.video)) {
         this.video = null;
-        this.findVideo();
+        setTimeout(() => this.findVideo(), 500);
       }
     });
     
@@ -257,43 +461,38 @@ class UniversalVideoController {
       subtree: true
     });
     
-    // Ascolta eventi del video per re-rilevamento
+    // Eventi del video
     this.video.addEventListener('loadstart', () => {
-      setTimeout(() => this.findVideo(), 500);
+      setTimeout(() => {
+        if (!this.isValidVideo(this.video)) {
+          this.findVideo();
+        }
+      }, 1000);
+    });
+    
+    this.video.addEventListener('canplay', () => {
+      console.log('✅ Video pronto per la riproduzione');
+      if (this.isOverlayEnabled && !this.overlayBar) {
+        setTimeout(() => this.showOverlay(), 500);
+      }
     });
   }
   
   async skipToTime(seconds) {
     if (!this.video) {
-      this.findVideo(); // Riprova a trovare il video
+      this.findVideo();
       if (!this.video) {
         throw new Error('Nessun video trovato nella pagina');
       }
     }
     
     try {
-      // Verifica che il video sia pronto
-      if (this.video.duration === 0 || isNaN(this.video.duration)) {
-        // Aspetta che il video sia caricato
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Timeout caricamento video')), 5000);
-          
-          const checkReady = () => {
-            if (this.video.duration > 0) {
-              clearTimeout(timeout);
-              resolve();
-            } else {
-              setTimeout(checkReady, 100);
-            }
-          };
-          
-          checkReady();
-        });
+      // Aspetta che il video sia pronto
+      if (!this.isValidVideo(this.video) || this.video.duration === 0) {
+        await this.waitForVideoReady();
       }
       
-      // Limita il tempo alla durata del video
       const targetTime = Math.min(seconds, this.video.duration);
-      
       this.video.currentTime = targetTime;
       
       return {
@@ -306,28 +505,72 @@ class UniversalVideoController {
     }
   }
   
+  async goForward(seconds) {
+    if (!this.video) {
+      this.findVideo();
+      if (!this.video) {
+        throw new Error('Nessun video trovato nella pagina');
+      }
+    }
+    
+    try {
+      if (!this.isValidVideo(this.video)) {
+        await this.waitForVideoReady();
+      }
+      
+      const currentTime = this.video.currentTime;
+      const newTime = Math.min(currentTime + seconds, this.video.duration);
+      this.video.currentTime = newTime;
+      
+      return {
+        success: true,
+        message: `Video avanzato di ${seconds} secondi`
+      };
+      
+    } catch (error) {
+      throw new Error(`Errore nel controllare il video: ${error.message}`);
+    }
+  }
+  
+  async waitForVideoReady() {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout: video non pronto'));
+      }, 10000);
+      
+      const checkReady = () => {
+        if (this.isValidVideo(this.video) && this.video.duration > 0) {
+          clearTimeout(timeout);
+          resolve();
+        } else {
+          setTimeout(checkReady, 200);
+        }
+      };
+      
+      checkReady();
+    });
+  }
+  
   // Gestione overlay bar
   loadOverlaySettings() {
     chrome.storage.sync.get(['overlayEnabled'], (result) => {
-      this.isOverlayEnabled = result.overlayEnabled !== false; // Default true
+      this.isOverlayEnabled = result.overlayEnabled !== false;
     });
   }
   
   createOverlayBar() {
-    if (!this.isOverlayEnabled || this.overlayBar) return;
+    if (this.overlayBar) return;
     
-    // Carica i valori salvati
     chrome.storage.sync.get(['savedTime', 'savedDuration'], (result) => {
       const savedTime = result.savedTime || '';
       const savedDuration = result.savedDuration || '';
       
-      // Crea la barra overlay
       this.overlayBar = document.createElement('div');
       this.overlayBar.id = 'uvc-overlay-bar';
       this.overlayBar.innerHTML = `
         <div class="uvc-bar-content">
           <div class="uvc-bar-header">
-            <span>🎥 Video Controller</span>
+            <span>🎥 Skipper Ext</span>
             <button class="uvc-close-btn" title="Chiudi barra">×</button>
           </div>
           <div class="uvc-bar-controls">
@@ -343,293 +586,111 @@ class UniversalVideoController {
         </div>
       `;
       
-      // Stili CSS
-      const style = document.createElement('style');
-      style.textContent = `
-        #uvc-overlay-bar {
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          right: 0 !important;
-          z-index: 999999 !important;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-          color: white !important;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
-          box-shadow: 0 2px 15px rgba(0,0,0,0.3) !important;
-          border-bottom: 1px solid rgba(255,255,255,0.2) !important;
-          backdrop-filter: blur(10px) !important;
-          animation: uvcSlideDown 0.3s ease-out !important;
-        }
-        
-        @keyframes uvcSlideDown {
-          from { transform: translateY(-100%); opacity: 0; }
-          to { transform: translateY(0); opacity: 1; }
-        }
-        
-        @keyframes uvcSlideUp {
-          from { transform: translateY(0); opacity: 1; }
-          to { transform: translateY(-100%); opacity: 0; }
-        }
-        
-        .uvc-bar-content {
-          max-width: 1200px !important;
-          margin: 0 auto !important;
-          padding: 8px 16px !important;
-        }
-        
-        .uvc-bar-header {
-          display: flex !important;
-          justify-content: space-between !important;
-          align-items: center !important;
-          margin-bottom: 8px !important;
-        }
-        
-        .uvc-bar-header span {
-          font-weight: 600 !important;
-          font-size: 14px !important;
-        }
-        
-        .uvc-close-btn {
-          background: rgba(255,255,255,0.2) !important;
-          border: none !important;
-          color: white !important;
-          width: 24px !important;
-          height: 24px !important;
-          border-radius: 12px !important;
-          cursor: pointer !important;
-          font-size: 16px !important;
-          font-weight: bold !important;
-          line-height: 1 !important;
-          transition: all 0.2s !important;
-        }
-        
-        .uvc-close-btn:hover {
-          background: rgba(255,255,255,0.3) !important;
-          transform: scale(1.1) !important;
-        }
-        
-        .uvc-bar-controls {
-          display: flex !important;
-          gap: 16px !important;
-          flex-wrap: wrap !important;
-        }
-        
-        .uvc-input-group {
-          display: flex !important;
-          gap: 8px !important;
-          align-items: center !important;
-        }
-        
-        .uvc-input-group input {
-          padding: 6px 12px !important;
-          border: 1px solid rgba(255,255,255,0.3) !important;
-          border-radius: 20px !important;
-          background: rgba(255,255,255,0.15) !important;
-          color: white !important;
-          font-size: 12px !important;
-          width: 80px !important;
-          backdrop-filter: blur(10px) !important;
-        }
-        
-        .uvc-input-group input::placeholder {
-          color: rgba(255,255,255,0.7) !important;
-        }
-        
-        .uvc-input-group input:focus {
-          outline: none !important;
-          border-color: rgba(255,255,255,0.6) !important;
-          background: rgba(255,255,255,0.25) !important;
-          box-shadow: 0 0 0 2px rgba(255,255,255,0.2) !important;
-        }
-        
-        .uvc-btn {
-          padding: 6px 14px !important;
-          border: none !important;
-          border-radius: 20px !important;
-          font-size: 12px !important;
-          font-weight: 500 !important;
-          cursor: pointer !important;
-          transition: all 0.2s !important;
-          white-space: nowrap !important;
-        }
-        
-        .uvc-skip {
-          background: rgba(66, 133, 244, 0.9) !important;
-          color: white !important;
-        }
-        
-        .uvc-forward {
-          background: rgba(52, 168, 83, 0.9) !important;
-          color: white !important;
-        }
-        
-        .uvc-btn:hover {
-          transform: translateY(-1px) !important;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
-        }
-        
-        .uvc-btn:active {
-          transform: translateY(0) !important;
-        }
-        
-        @media (max-width: 768px) {
-          .uvc-bar-controls {
-            flex-direction: column !important;
-            gap: 8px !important;
-          }
-          .uvc-input-group {
-            justify-content: center !important;
-          }
-        }
-      `;
-      
-      // Aggiungi stili e barra al DOM
-      document.head.appendChild(style);
+      this.addOverlayStyles();
       document.body.appendChild(this.overlayBar);
-      
       this.setupOverlayListeners();
     });
   }
   
-  setupOverlayListeners() {
-    if (!this.overlayBar) return;
+  addOverlayStyles() {
+    if (document.getElementById('uvc-overlay-styles')) return;
     
-    const timeInput = this.overlayBar.querySelector('#uvc-time-input');
-    const durationInput = this.overlayBar.querySelector('#uvc-duration-input');
-    const skipBtn = this.overlayBar.querySelector('#uvc-skip-btn');
-    const forwardBtn = this.overlayBar.querySelector('#uvc-forward-btn');
-    const closeBtn = this.overlayBar.querySelector('.uvc-close-btn');
-    
-    // Salvataggio automatico
-    timeInput.addEventListener('input', (e) => {
-      chrome.storage.sync.set({ savedTime: e.target.value });
-    });
-    
-    durationInput.addEventListener('input', (e) => {
-      chrome.storage.sync.set({ savedDuration: e.target.value });
-    });
-    
-    // Funzioni di conversione (duplicate per l'overlay)
-    const timeToSeconds = (timeStr) => {
-      if (!timeStr) return 0;
-      const parts = timeStr.split(':');
-      let seconds = 0;
-      if (parts.length === 1) {
-        seconds = parseInt(parts[0]) || 0;
-      } else if (parts.length === 2) {
-        seconds = (parseInt(parts[0]) || 0) * 60 + (parseInt(parts[1]) || 0);
-      } else if (parts.length === 3) {
-        seconds = (parseInt(parts[0]) || 0) * 3600 + 
-                  (parseInt(parts[1]) || 0) * 60 + 
-                  (parseInt(parts[2]) || 0);
+    const style = document.createElement('style');
+    style.id = 'uvc-overlay-styles';
+    style.textContent = `
+      #uvc-overlay-bar {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 999999 !important;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3) !important;
+        border-bottom: 1px solid rgba(255,255,255,0.2) !important;
+        backdrop-filter: blur(15px) !important;
+        animation: uvcSlideDown 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) !important;
       }
-      return seconds;
-    };
-    
-    const durationToSeconds = (durationStr) => {
-      if (!durationStr) return 0;
-      let seconds = 0;
-      const str = durationStr.toLowerCase();
-      const minMatch = str.match(/(\d+)m/);
-      if (minMatch) seconds += parseInt(minMatch[1]) * 60;
-      const secMatch = str.match(/(\d+)s/);
-      if (secMatch) seconds += parseInt(secMatch[1]);
-      if (seconds === 0) {
-        const numMatch = str.match(/(\d+)/);
-        if (numMatch) seconds = parseInt(numMatch[1]);
-      }
-      return seconds;
-    };
-    
-    // Eventi dei pulsanti
-    skipBtn.addEventListener('click', () => {
-      const seconds = timeToSeconds(timeInput.value);
-      if (seconds >= 0) {
-        this.skipToTime(seconds);
-      }
-    });
-    
-    forwardBtn.addEventListener('click', () => {
-      const seconds = durationToSeconds(durationInput.value);
-      if (seconds > 0) {
-        this.goForward(seconds);
-      }
-    });
-    
-    // Chiusura della barra
-    closeBtn.addEventListener('click', () => {
-      this.hideOverlay();
-    });
-  }
-  
-  showOverlay() {
-    if (!this.video || !this.isOverlayEnabled) return;
-    
-    if (!this.overlayBar) {
-      this.createOverlayBar();
-    } else {
-      this.overlayBar.style.display = 'block';
-      this.overlayBar.style.animation = 'uvcSlideDown 0.3s ease-out';
-    }
-  }
-  
-  hideOverlay() {
-    if (this.overlayBar) {
-      this.overlayBar.style.animation = 'uvcSlideUp 0.3s ease-out';
-      setTimeout(() => {
-        if (this.overlayBar) {
-          this.overlayBar.style.display = 'none';
+      
+      @keyframes uvcSlideDown {
+        from { 
+          transform: translateY(-100%); 
+          opacity: 0; 
         }
-      }, 300);
-    }
-  }
-  
-  toggleOverlay() {
-    this.isOverlayEnabled = !this.isOverlayEnabled;
-    chrome.storage.sync.set({ overlayEnabled: this.isOverlayEnabled });
-    
-    if (this.isOverlayEnabled && this.video) {
-      this.showOverlay();
-    } else {
-      this.hideOverlay();
-    }
-  }
-  
-  async goForward(seconds) {
-    if (!this.video) {
-      this.findVideo();
-      if (!this.video) {
-        throw new Error('Nessun video trovato nella pagina');
+        to { 
+          transform: translateY(0); 
+          opacity: 1; 
+        }
       }
-    }
-    
-    try {
-      const currentTime = this.video.currentTime;
-      const newTime = Math.min(currentTime + seconds, this.video.duration);
       
-      this.video.currentTime = newTime;
+      @keyframes uvcSlideUp {
+        from { 
+          transform: translateY(0); 
+          opacity: 1; 
+        }
+        to { 
+          transform: translateY(-100%); 
+          opacity: 0; 
+        }
+      }
       
-      return {
-        success: true,
-        message: `Video avanzato di ${seconds} secondi`
-      };
+      .uvc-bar-content {
+        max-width: 1200px !important;
+        margin: 0 auto !important;
+        padding: 12px 20px !important;
+      }
       
-    } catch (error) {
-      throw new Error(`Errore nel controllare il video: ${error.message}`);
-    }
-  }
-}
-
-// Inizializza il controller quando il DOM è pronto
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    new UniversalVideoController();
-  });
-} else {
-  new UniversalVideoController();
-}
-
-// Inizializza anche dopo un breve ritardo per video caricati dinamicamente
-setTimeout(() => {
-  new UniversalVideoController();
-}, 1000);
+      .uvc-bar-header {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        margin-bottom: 12px !important;
+      }
+      
+      .uvc-bar-header span {
+        font-weight: 600 !important;
+        font-size: 15px !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+      }
+      
+      .uvc-close-btn {
+        background: rgba(255,255,255,0.2) !important;
+        border: none !important;
+        color: white !important;
+        width: 28px !important;
+        height: 28px !important;
+        border-radius: 14px !important;
+        cursor: pointer !important;
+        font-size: 18px !important;
+        font-weight: bold !important;
+        line-height: 1 !important;
+        transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      
+      .uvc-close-btn:hover {
+        background: rgba(255,255,255,0.3) !important;
+        transform: scale(1.1) rotate(90deg) !important;
+      }
+      
+      .uvc-bar-controls {
+        display: flex !important;
+        gap: 20px !important;
+        flex-wrap: wrap !important;
+        justify-content: center !important;
+      }
+      
+      .uvc-input-group {
+        display: flex !important;
+        gap: 10px !important;
+        align-items: center !important;
+      }
+      
+      .uvc-input-group input {
+        padding: 8px 14px !important;
+        border: 1px solid rgba(255,255,
