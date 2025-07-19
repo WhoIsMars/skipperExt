@@ -1,24 +1,4 @@
-} catch (error) {
-    showStatus('Errore di comunicazione', 'error');
-  }
-});
-
-// Funzioni overlay
-function updateOverlayButton(enabled) {
-  if (enabled) {
-    overlayToggleBtn.textContent = '🎯 Disattiva barra overlay';
-    overlayToggleBtn.className = 'overlay-btn active';
-  } else {
-    overlayToggleBtn.textContent = '🎯 Attiva barra overlay';
-    overlayToggleBtn.className = 'overlay-btn';
-  }
-}
-
-overlayToggleBtn.addEventListener('click', async () => {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    const result = await chrome.tabs.sendMessage(tab.id, {// Elementi DOM
+// Elementi DOM
 const timeInput = document.getElementById('timeInput');
 const durationInput = document.getElementById('durationInput');
 const skipBtn = document.getElementById('skipBtn');
@@ -185,5 +165,51 @@ forwardBtn.addEventListener('click', async () => {
     }
   } catch (error) {
     showStatus('Errore di comunicazione', 'error');
+  }
+});
+
+// Funzioni overlay
+function updateOverlayButton(enabled) {
+  if (enabled) {
+    overlayToggleBtn.textContent = '🎯 Disattiva barra overlay';
+    overlayToggleBtn.className = 'overlay-btn active';
+  } else {
+    overlayToggleBtn.textContent = '🎯 Attiva barra overlay';
+    overlayToggleBtn.className = 'overlay-btn';
+  }
+}
+
+overlayToggleBtn.addEventListener('click', async () => {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    
+    const result = await chrome.tabs.sendMessage(tab.id, {
+      action: 'toggleOverlay'
+    });
+    
+    if (result.success) {
+      updateOverlayButton(result.enabled);
+      showStatus(result.enabled ? 'Overlay attivato' : 'Overlay disattivato', 'success');
+    }
+  } catch (error) {
+    showStatus('Errore comunicazione overlay', 'error');
+  }
+});
+
+showOverlayBtn.addEventListener('click', async () => {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    
+    const result = await chrome.tabs.sendMessage(tab.id, {
+      action: 'showOverlay'
+    });
+    
+    if (result.success) {
+      showStatus('Overlay mostrato', 'success');
+    } else {
+      showStatus('Overlay non disponibile', 'error');
+    }
+  } catch (error) {
+    showStatus('Errore comunicazione overlay', 'error');
   }
 });
